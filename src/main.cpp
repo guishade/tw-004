@@ -15,6 +15,9 @@
 #define LED_PIN             4
 #define CHARGE_PIN          32
 
+TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
+PCF8563_Class rtc;
+
 char buff[256];
 bool rtcIrq = false;
 bool initial = 1;
@@ -29,8 +32,6 @@ bool pressed = false;
 uint32_t pressedTime = 0;
 bool charge_indication = false;
 uint8_t hh, mm, ss ;
-TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
-PCF8563_Class rtc;
 
 //----------------------------------------------------------------------------------------------------------------
 
@@ -39,6 +40,10 @@ String getVoltage()
     uint16_t v = analogRead(BATT_ADC_PIN);
     float battery_voltage = ((float)v / 4095.0) * 2.0 * 3.3 * (vref / 1000.0);
     return String(battery_voltage) + "V";
+}
+    
+void Voltage_Show(){
+    tft.drawString(getVoltage(),0 , 20);
 }
 
 void setupADC()
@@ -56,20 +61,54 @@ void setupADC()
     }
 }
 
+void setupRTC()
+{
+    rtc.begin(Wire);
+    //Check if the RTC clock matches, if not, use compile time
+    rtc.check();
+    RTC_Date datetime = rtc.getDateTime();
+    hh = datetime.hour;
+    mm = datetime.minute;
+    ss = datetime.second;
+}
+
+void RTC_Show()
+{
+    if (targetTime < millis()) {
+        RTC_Date datetime = rtc.getDateTime();
+        tft.setTextColor(TFT_GREEN, TFT_BLACK);
+        tft.setCursor (0, 0);
+        tft.print(__TIME__); // This uses the standard ADAFruit small font
+        tft.setCursor (0, 10);
+        tft.print(__DATE__);
+    }
+}
+
 //----------------------------------------------------------------------------------------------------------------
 
 void setup() {
     Serial.begin(115200);
     tft.init();
-    tft.setRotation(1);
+    tft.setRotation(0);
     tft.setSwapBytes(true);
     tft.fillScreen(TFT_BLACK);
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     Wire.setClock(400000);
-    pinMode(TP_PIN_PIN, INPUT); //! Must be set to pull-up output mode in order to wake up in deep sleep mode
-    pinMode(TP_PWR_PIN, PULLUP);
+    
+    pinMode(TP_PIN_PIN, INPUT);
+    pinMode(TP_PWR_PIN, PULLUP);//! Must be set to pull-up output mode in order to wake up in deep sleep mode
     digitalWrite(TP_PWR_PIN, HIGH);
     pinMode(LED_PIN, OUTPUT);
+    pinMode(CHARGE_PIN, INPUT_PULLUP);
+    
+    attachInterrupt(CHARGE_PIN, [] {
+        charge_indication = true;
+    }, CHANGE);
+    if (digitalRead(CHARGE_PIN) == LOW) {
+        charge_indication = true;
+    }
+    
+    setupRTC();
 }
 
 void loop() {
@@ -88,10 +127,8 @@ void loop() {
         } else {
             if (millis() - pressedTime > 3000) {
                 tft.fillScreen(TFT_BLACK);
-                tft.drawString("Reset WiFi Setting",  20, tft.height() / 2 );
+                tft.drawString("pressed 3 segs",0, 0);
                 delay(3000);
-                //wifiManager.resetSettings();
-                //wifiManager.erase(true);
                 esp_restart();
             }
         }
@@ -101,11 +138,8 @@ void loop() {
 
     switch (func_select) {
     case 0:
-        tft.setTextColor(TFT_GREEN, TFT_BLACK);
-        tft.setTextDatum(MC_DATUM);
-        tft.drawString("Press again to wake up",  tft.width() / 2, tft.height() / 2 );
-        delay(3000);
-        Serial.println("Go to Sleep");
+        RTC_Show();
+        Voltage_Show();
         delay(3000);
         tft.writecommand(ST7735_SLPIN);
         tft.writecommand(ST7735_DISPOFF);
